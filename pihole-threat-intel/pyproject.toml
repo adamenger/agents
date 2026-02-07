@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pihole-threat-intel"
+version = "0.1.0"
+description = "Daily threat intelligence analysis of PiHole DNS logs using local LLMs"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic-ai[openai]>=0.1.0",
+    "pydantic-settings>=2.0",
+    "opensearch-py>=2.4.0",
+    "structlog>=24.0",
+    "pyyaml>=6.0",
+]
+
+# TODO: Add when enabling Claude escalation
+# [project.optional-dependencies]
+# claude = ["pydantic-ai[anthropic]>=0.1.0"]
+
+[project.scripts]
+pihole-threat-intel = "pihole_threat_intel.main:main"

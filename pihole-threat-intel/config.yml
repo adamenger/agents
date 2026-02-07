@@ -1,0 +1,173 @@
+defaults:
+  opensearch_host: "localhost"
+  opensearch_port: 9200
+  opensearch_pihole_index_prefix: "pihole"
+  opensearch_evaluations_index: "pihole-evaluations"
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "qwen3:14b"
+  batch_size: 25
+  lookback_hours: 24
+  previous_evaluations_count: 20
+  evaluation_ttl_days: 7
+
+prompts:
+  deepseek_system_prompt: |
+    You are a DNS threat intelligence analyst. You evaluate domain names queried
+    through a home network's Pi-hole DNS server and classify each as benign,
+    suspicious, malicious, or unknown.
+
+    For each domain, consider:
+    - Domain generation algorithm (DGA) patterns: random-looking strings, unusual length
+    - Known malicious TLDs or hosting patterns
+    - Query frequency and client distribution anomalies
+    - Resemblance to legitimate domains (typosquatting)
+    - Known C2, phishing, or malware infrastructure patterns
+    - Whether the domain appears to serve ads, tracking, or telemetry
+
+    Classify each domain with:
+    - threat_level: benign, suspicious, malicious, or unknown
+    - confidence: 0-100 (how certain you are)
+    - reasoning: brief explanation of your assessment, with slight dad humor where appropriate
+    - indicators: list of specific threat indicators observed (e.g. "DGA pattern", "known malicious TLD", "typosquatting")
+
+    Be conservative: only mark domains as malicious when there are clear indicators.
+    Mark as suspicious when patterns are concerning but not definitive.
+    Most domains in a home network will be benign.
+    Keep your reasoning concise but feel free to sprinkle in light dad humor or puns
+    when summarizing benign or suspicious domains. Stay serious for malicious ones.
+
+  claude_system_prompt: |
+    You are an expert DNS threat intelligence analyst performing secondary review
+    of domains flagged as potentially threatening by a primary analysis model.
+    These domains had low confidence scores in initial assessment.
+
+    Provide definitive classifications with detailed reasoning. You have access
+    to broader threat intelligence context. Be thorough but precise.
+
+    Classify each domain with:
+    - threat_level: benign, suspicious, malicious, or unknown
+    - confidence: 0-100
+    - reasoning: detailed explanation
+    - indicators: specific threat indicators
+
+  batch_user_prompt: |
+    /nothink
+    {learning_context}
+
+    Evaluate each of these DNS domains queried on a home network.
+    For each domain, provide threat_level, confidence, reasoning, and indicators.
+    You MUST evaluate ALL domains listed below. Do not skip any.
+
+    Domains to evaluate:
+    {domain_list}
+
+  previous_evaluations_header: |
+    Here are recent evaluations for reference — use these for consistency:
+
+  no_previous_evaluations: |
+    No previous evaluations available. This is the first run.
+
+known_domains:
+  suffixes:
+    # Google
+    - ".google.com"
+    - ".googleapis.com"
+    - ".googlevideo.com"
+    - ".googleusercontent.com"
+    - ".gstatic.com"
+    - ".google-analytics.com"
+    - ".googleadservices.com"
+    - ".googlesyndication.com"
+    - ".doubleclick.net"
+    # Apple
+    - ".apple.com"
+    - ".icloud.com"
+    - ".mzstatic.com"
+    - ".apple-dns.net"
+    # Microsoft
+    - ".microsoft.com"
+    - ".microsoftonline.com"
+    - ".windows.com"
+    - ".windows.net"
+    - ".office.com"
+    - ".office365.com"
+    - ".live.com"
+    - ".outlook.com"
+    - ".bing.com"
+    - ".msftconnecttest.com"
+    # Amazon / AWS
+    - ".amazon.com"
+    - ".amazonaws.com"
+    - ".amazontrust.com"
+    - ".cloudfront.net"
+    # Cloudflare
+    - ".cloudflare.com"
+    - ".cloudflare-dns.com"
+    - ".one.one.one.one"
+    # Meta
+    - ".facebook.com"
+    - ".fbcdn.net"
+    - ".instagram.com"
+    - ".whatsapp.net"
+    # CDN / Infrastructure
+    - ".akamai.net"
+    - ".akamaized.net"
+    - ".akamaitechnologies.com"
+    - ".fastly.net"
+    - ".edgekey.net"
+    - ".edgesuite.net"
+    # DNS / NTP
+    - ".ntp.org"
+    - ".in-addr.arpa"
+    - ".ip6.arpa"
+    # Common services
+    - ".github.com"
+    - ".githubusercontent.com"
+    - ".docker.com"
+    - ".docker.io"
+    - ".debian.org"
+    - ".ubuntu.com"
+    - ".npmjs.org"
+    - ".pypi.org"
+    - ".spotify.com"
+    - ".netflix.com"
+    - ".roku.com"
+    - ".plex.tv"
+    - ".plex.direct"
+    - ".slack.com"
+    - ".zoom.us"
+    - ".dropbox.com"
+    # Home automation
+    - ".home-assistant.io"
+    - ".ecobee.com"
+    - ".nest.com"
+    # Local / internal
+    - ".local"
+    - ".lan"
+    - ".internal"
+    - ".localdomain"
+    - ".home.arpa"
+
+  exact:
+    - "localhost"
+    - "gateway"
+    - "pi.hole"
+
+output:
+  summary_header: "=== PiHole Threat Intel Report === (DNS Dad is watching)"
+  summary_footer: "=== End Report === Stay safe out there, kiddo."
+  alert_prefix: "[ALERT]"
+  no_threats_message: "All clear! Nothing suspicious — just the usual suspects. DNS Dad approves."
+  stats_template: |
+    Domains queried (24h):  {total_domains_queried}
+    After known-good filter: {domains_after_filtering}
+    Already evaluated:       {domains_already_evaluated}
+    Evaluated this run:      {domains_to_evaluate}
+    Batches processed:       {batches_processed}
+
+    Results:
+      Benign:     {benign_count}
+      Suspicious: {suspicious_count}
+      Malicious:  {malicious_count}
+      Unknown:    {unknown_count}
+      Errors:     {errors}
