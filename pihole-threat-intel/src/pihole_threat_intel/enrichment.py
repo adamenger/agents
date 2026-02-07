@@ -144,7 +144,7 @@ async def _check_cloudflare(domain: str) -> bool | None:
 
 async def _check_spamhaus(domain: str) -> str | None:
     """Query Spamhaus DBL. Returns threat category or None if clean."""
-    results = await _resolve(f"{domain}.dbl.spamhaus.org", "A")
+    results = await _resolve(f"{domain}.dbl.spamhaus.org", "A", "1.1.1.1")
     if not results:
         return None
     code_map = {
@@ -165,7 +165,7 @@ async def _check_spamhaus(domain: str) -> str | None:
 
 async def _check_surbl(domain: str) -> str | None:
     """Query SURBL. Returns threat category or None if clean."""
-    results = await _resolve(f"{domain}.multi.surbl.org", "A")
+    results = await _resolve(f"{domain}.multi.surbl.org", "A", "1.1.1.1")
     if not results:
         return None
     categories = []
@@ -264,10 +264,10 @@ async def _enrich_one(stats: DomainStats) -> EnrichedDomain:
         (age, registrar, created),
         (pulses, malware, tags),
     ) = await asyncio.gather(
-        _resolve(domain, "A"),
-        _resolve(domain, "MX"),
-        _resolve(domain, "NS"),
-        _resolve(domain, "TXT"),
+        _resolve(domain, "A", "1.1.1.1"),
+        _resolve(domain, "MX", "1.1.1.1"),
+        _resolve(domain, "NS", "1.1.1.1"),
+        _resolve(domain, "TXT", "1.1.1.1"),
         _check_quad9(domain),
         _check_cloudflare(domain),
         _check_spamhaus(domain),

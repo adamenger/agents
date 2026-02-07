@@ -166,6 +166,10 @@ known_domains:
     - ".home-assistant.io"
     - ".ecobee.com"
     - ".nest.com"
+    # DNSBL / enrichment lookups (agent's own queries)
+    - ".dbl.spamhaus.org"
+    - ".multi.surbl.org"
+    - ".zen.spamhaus.org"
     # Local / internal
     - ".local"
     - ".lan"
