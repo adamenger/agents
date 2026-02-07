@@ -10,4 +10,7 @@ agents running on your machine and assisting with certain tasks.
 
 This is a proof of concept agent which evaluates historical DNS data collected
 by Pi-Hole to determine if any of the requested domains look suspicious or
-malicious. 
+malicious. This stack has two modes "Simple" and "SIEM". The simple stack is
+meant as a proof of concept to explore LLM reasoning about DNS data. The SIEM
+stack is designed to show SOC and threat hunting analysts what incorporating an
+LLM in the alert workflow could look like.
