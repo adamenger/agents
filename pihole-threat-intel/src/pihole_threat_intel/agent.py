@@ -8,6 +8,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
 
 from .config import settings
+from .enrichment import EnrichedDomain
 from .models import (
     BatchEvaluationResult,
     DomainEvaluation,
@@ -60,14 +61,8 @@ def _format_learning_context(previous: list[DomainEvaluation]) -> str:
     return get_prompts()["previous_evaluations_header"] + "\n" + "\n".join(lines)
 
 
-def _format_batch_prompt(batch: list[DomainStats], learning_context: str) -> str:
-    domain_lines = []
-    for d in batch:
-        clients = ", ".join(d.unique_clients[:5])
-        qtypes = ", ".join(d.query_types)
-        domain_lines.append(
-            f"- {d.domain} | queries: {d.query_count} | clients: {clients} | types: {qtypes}"
-        )
+def _format_batch_prompt(batch: list[EnrichedDomain], learning_context: str) -> str:
+    domain_lines = [d.format_for_prompt() for d in batch]
 
     return get_prompts()["batch_user_prompt"].format(
         learning_context=learning_context,
@@ -76,10 +71,10 @@ def _format_batch_prompt(batch: list[DomainStats], learning_context: str) -> str
 
 
 async def evaluate_batch(
-    batch: list[DomainStats],
+    batch: list[EnrichedDomain],
     previous_evaluations: list[DomainEvaluation],
 ) -> list[DomainEvaluation]:
-    """Evaluate a batch of domains using the configured Ollama model."""
+    """Evaluate a batch of enriched domains using the configured Ollama model."""
     agent = _build_agent()
     learning_context = _format_learning_context(previous_evaluations)
     user_prompt = _format_batch_prompt(batch, learning_context)
@@ -97,7 +92,7 @@ async def evaluate_batch(
 
     evaluations: list[DomainEvaluation] = []
     for single in raw_evaluations:
-        stats = domain_lookup.get(single.domain)
+        enriched = domain_lookup.get(single.domain)
         ev = DomainEvaluation(
             domain=single.domain,
             threat_level=single.threat_level,
@@ -106,8 +101,8 @@ async def evaluate_batch(
             indicators=single.indicators,
             evaluated_by=settings.ollama_model,
             escalated=False,
-            query_count=stats.query_count if stats else 0,
-            unique_clients=stats.unique_clients if stats else [],
+            query_count=enriched.stats.query_count if enriched else 0,
+            unique_clients=enriched.stats.unique_clients if enriched else [],
             evaluated_at=datetime.now(timezone.utc),
         )
         evaluations.append(ev)
@@ -122,9 +117,9 @@ async def evaluate_batch(
     # ]
     # if escalation_candidates:
     #     log.info("escalating_to_claude", count=len(escalation_candidates))
-    #     escalation_stats = [domain_lookup[ev.domain] for ev in escalation_candidates if ev.domain in domain_lookup]
+    #     escalation_enriched = [domain_lookup[ev.domain] for ev in escalation_candidates if ev.domain in domain_lookup]
     #     claude_agent = _build_claude_agent()
-    #     claude_prompt = _format_batch_prompt(escalation_stats, learning_context)
+    #     claude_prompt = _format_batch_prompt(escalation_enriched, learning_context)
     #     try:
     #         claude_result = await claude_agent.run(claude_prompt)
     #         claude_lookup = {e.domain: e for e in claude_result.output.evaluations}

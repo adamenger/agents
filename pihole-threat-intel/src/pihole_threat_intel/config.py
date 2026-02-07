@@ -36,5 +36,12 @@ class Settings(BaseSettings):
     previous_evaluations_count: int = _defaults.get("previous_evaluations_count", 20)
     evaluation_ttl_days: int = _defaults.get("evaluation_ttl_days", 7)
 
+    # Email output
+    email_enabled: bool = _defaults.get("email_enabled", False)
+    smtp_host: str = _defaults.get("smtp_host", "localhost")
+    smtp_port: int = _defaults.get("smtp_port", 1025)
+    email_sender: str = _defaults.get("email_sender", "threat-intel@pihole.local")
+    email_recipients: str = _defaults.get("email_recipients", "analyst@pihole.local")
+
 
 settings = Settings()

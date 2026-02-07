@@ -7,10 +7,11 @@ import structlog
 from .agent import evaluate_batch
 from .config import settings
 from .datasource import DataSource
-from .domain_aggregator import batch_domains, filter_known_good, remove_already_evaluated
+from .domain_aggregator import filter_known_good, remove_already_evaluated
+from .enrichment import EnrichedDomain, enrich_domains
 from .logging_config import setup_logging
 from .models import DomainEvaluation, RunStats, ThreatLevel
-from .output import StdoutHandler
+from .output import EmailHandler, OutputHandler, StdoutHandler
 
 log = structlog.get_logger()
 
@@ -31,7 +32,11 @@ async def run() -> None:
     log.info("starting_pihole_threat_intel", data_source=settings.data_source)
 
     stats = RunStats()
-    handler = StdoutHandler()
+    handlers: list[OutputHandler] = [StdoutHandler()]
+    if settings.email_enabled:
+        recipients = [r.strip() for r in settings.email_recipients.split(",")]
+        handlers.append(EmailHandler(settings.smtp_host, settings.smtp_port, settings.email_sender, recipients))
+        log.info("email_output_enabled", smtp=f"{settings.smtp_host}:{settings.smtp_port}", recipients=recipients)
     ds = _get_datasource()
 
     # 1. Query for last 24h of pihole logs
@@ -40,7 +45,8 @@ async def run() -> None:
 
     if not domain_stats:
         log.warning("no_domains_found")
-        handler.emit_summary([], stats)
+        for h in handlers:
+            h.emit_summary([], stats)
         return
 
     # 2. Filter known-good domains
@@ -55,14 +61,19 @@ async def run() -> None:
 
     if not to_evaluate:
         log.info("no_new_domains_to_evaluate")
-        handler.emit_summary([], stats)
+        for h in handlers:
+            h.emit_summary([], stats)
         return
 
-    # 4. Load previous evaluations for learning context
+    # 4. Enrich domains with public threat intel (dig, DNSBL, RDAP, OTX)
+    enriched = await enrich_domains(to_evaluate)
+
+    # 5. Load previous evaluations for learning context
     previous = ds.fetch_previous_evaluations()
 
-    # 5. Batch and evaluate
-    batches = batch_domains(to_evaluate, settings.batch_size)
+    # 6. Batch and evaluate
+    batch_size = settings.batch_size
+    batches = [enriched[i:i + batch_size] for i in range(0, len(enriched), batch_size)]
     all_evaluations: list[DomainEvaluation] = []
 
     for i, batch in enumerate(batches):
@@ -96,10 +107,12 @@ async def run() -> None:
     # 8. Emit alerts for non-benign domains
     for ev in all_evaluations:
         if ev.threat_level in (ThreatLevel.SUSPICIOUS, ThreatLevel.MALICIOUS):
-            handler.emit_alert(ev)
+            for h in handlers:
+                h.emit_alert(ev)
 
     # 9. Emit summary report
-    handler.emit_summary(all_evaluations, stats)
+    for h in handlers:
+        h.emit_summary(all_evaluations, stats)
 
     log.info("run_complete", **stats.model_dump())
 

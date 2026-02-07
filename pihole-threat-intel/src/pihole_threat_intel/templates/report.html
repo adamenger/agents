@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; color: #333; }
+  .container { max-width: 700px; margin: 0 auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  .header { background: #1a1a2e; color: #fff; padding: 24px 32px; }
+  .header h1 { margin: 0 0 4px 0; font-size: 22px; }
+  .header .subtitle { color: #aaa; font-size: 13px; }
+  .stats { padding: 24px 32px; background: #f9f9fb; border-bottom: 1px solid #eee; }
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .stat-box { text-align: center; }
+  .stat-box .number { font-size: 28px; font-weight: 700; }
+  .stat-box .label { font-size: 11px; text-transform: uppercase; color: #888; margin-top: 2px; }
+  .stat-box.benign .number { color: #27ae60; }
+  .stat-box.suspicious .number { color: #f39c12; }
+  .stat-box.malicious .number { color: #e74c3c; }
+  .stat-box.unknown .number { color: #95a5a6; }
+  .pipeline { padding: 16px 32px; font-size: 13px; color: #888; border-bottom: 1px solid #eee; }
+  .pipeline span { color: #555; font-weight: 600; }
+  .section { padding: 24px 32px; }
+  .section h2 { font-size: 16px; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 2px solid #eee; }
+  .domain-card { padding: 12px 16px; margin-bottom: 8px; border-radius: 6px; border-left: 4px solid; }
+  .domain-card.malicious { background: #fdf2f2; border-color: #e74c3c; }
+  .domain-card.suspicious { background: #fef9e7; border-color: #f39c12; }
+  .domain-card.benign { background: #f0faf4; border-color: #27ae60; }
+  .domain-card.unknown { background: #f4f6f7; border-color: #95a5a6; }
+  .domain-name { font-weight: 700; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+  .domain-meta { display: flex; gap: 16px; margin-top: 4px; font-size: 12px; color: #888; }
+  .domain-reasoning { margin-top: 6px; font-size: 13px; color: #555; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+  .badge.malicious { background: #e74c3c; color: #fff; }
+  .badge.suspicious { background: #f39c12; color: #fff; }
+  .badge.benign { background: #27ae60; color: #fff; }
+  .badge.unknown { background: #95a5a6; color: #fff; }
+  .indicators { margin-top: 4px; }
+  .indicator { display: inline-block; background: #eef; color: #446; padding: 1px 6px; border-radius: 3px; font-size: 11px; margin-right: 4px; margin-top: 2px; }
+  .footer { padding: 20px 32px; background: #f9f9fb; border-top: 1px solid #eee; font-size: 12px; color: #aaa; text-align: center; }
+  .all-clear { text-align: center; padding: 40px 32px; color: #27ae60; }
+  .all-clear .icon { font-size: 48px; }
+  .all-clear .message { font-size: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>PiHole Threat Intel Report</h1>
+    <div class="subtitle">{{ timestamp }}</div>
+  </div>
+
+  <div class="stats">
+    <div class="stats-grid">
+      <div class="stat-box benign">
+        <div class="number">{{ stats.benign_count }}</div>
+        <div class="label">Benign</div>
+      </div>
+      <div class="stat-box suspicious">
+        <div class="number">{{ stats.suspicious_count }}</div>
+        <div class="label">Suspicious</div>
+      </div>
+      <div class="stat-box malicious">
+        <div class="number">{{ stats.malicious_count }}</div>
+        <div class="label">Malicious</div>
+      </div>
+      <div class="stat-box unknown">
+        <div class="number">{{ stats.unknown_count }}</div>
+        <div class="label">Unknown</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pipeline">
+    Scanned <span>{{ stats.total_domains_queried }}</span> domains
+    &rarr; <span>{{ stats.domains_after_filtering }}</span> after filtering
+    &rarr; <span>{{ stats.domains_to_evaluate }}</span> evaluated this run
+    &middot; <span>{{ stats.batches_processed }}</span> batches
+    {% if stats.errors %}&middot; <span style="color:#e74c3c">{{ stats.errors }} errors</span>{% endif %}
+  </div>
+
+  {% if threats %}
+  <div class="section">
+    <h2>Threats &amp; Suspicious Domains ({{ threats | length }})</h2>
+    {% for ev in threats %}
+    <div class="domain-card {{ ev.threat_level }}">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span class="domain-name">{{ ev.domain }}</span>
+        <span class="badge {{ ev.threat_level }}">{{ ev.threat_level }}</span>
+      </div>
+      <div class="domain-meta">
+        <span>Confidence: {{ ev.confidence }}%</span>
+        <span>Queries: {{ ev.query_count }}</span>
+        <span>Model: {{ ev.evaluated_by }}</span>
+      </div>
+      <div class="domain-reasoning">{{ ev.reasoning }}</div>
+      {% if ev.indicators %}
+      <div class="indicators">
+        {% for ind in ev.indicators %}<span class="indicator">{{ ind }}</span>{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if benign %}
+  <div class="section">
+    <h2>Benign Domains ({{ benign | length }})</h2>
+    {% for ev in benign %}
+    <div class="domain-card benign">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span class="domain-name">{{ ev.domain }}</span>
+        <span class="badge benign">benign</span>
+      </div>
+      <div class="domain-meta">
+        <span>Confidence: {{ ev.confidence }}%</span>
+        <span>Queries: {{ ev.query_count }}</span>
+      </div>
+      <div class="domain-reasoning">{{ ev.reasoning }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if not threats and not benign %}
+  <div class="all-clear">
+    <div class="message">All clear — no threats detected.</div>
+  </div>
+  {% endif %}
+
+  <div class="footer">
+    PiHole Threat Intel Agent
+  </div>
+</div>
+</body>
+</html>

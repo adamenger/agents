@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import smtplib
 import sys
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+
+import structlog
+from jinja2 import Environment, FileSystemLoader
 
 from .models import DomainEvaluation, RunStats, ThreatLevel
 from .yaml_config import get_output_strings
+
+log = structlog.get_logger()
 
 
 class OutputHandler(ABC):
@@ -44,3 +54,46 @@ class StdoutHandler(OutputHandler):
             f"-- {evaluation.reasoning}",
             file=sys.stderr,
         )
+
+
+class EmailHandler(OutputHandler):
+    def __init__(self, smtp_host: str, smtp_port: int, sender: str, recipients: list[str]) -> None:
+        self.smtp_host = smtp_host
+        self.smtp_port = smtp_port
+        self.sender = sender
+        self.recipients = recipients
+        template_dir = Path(__file__).parent / "templates"
+        self.env = Environment(loader=FileSystemLoader(str(template_dir)), autoescape=True)
+
+    def _render(self, evaluations: list[DomainEvaluation], stats: RunStats) -> str:
+        template = self.env.get_template("report.html")
+        threats = sorted(
+            [e for e in evaluations if e.threat_level != ThreatLevel.BENIGN],
+            key=lambda e: -e.confidence,
+        )
+        benign = [e for e in evaluations if e.threat_level == ThreatLevel.BENIGN]
+        return template.render(
+            stats=stats,
+            threats=threats,
+            benign=benign,
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        )
+
+    def _send(self, subject: str, html_body: str) -> None:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = self.sender
+        msg["To"] = ", ".join(self.recipients)
+        msg.attach(MIMEText(html_body, "html"))
+        with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+            server.sendmail(self.sender, self.recipients, msg.as_string())
+        log.info("email_sent", recipients=self.recipients)
+
+    def emit_summary(self, evaluations: list[DomainEvaluation], stats: RunStats) -> None:
+        subject = f"PiHole Threat Intel — {stats.malicious_count} malicious, {stats.suspicious_count} suspicious"
+        html = self._render(evaluations, stats)
+        self._send(subject, html)
+
+    def emit_alert(self, evaluation: DomainEvaluation) -> None:
+        # Individual alerts handled in summary email
+        pass

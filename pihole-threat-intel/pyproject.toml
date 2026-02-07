@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "structlog>=24.0",
     "pyyaml>=6.0",
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,10 @@ opensearch = ["opensearch-py>=2.4.0"]
 
 # TODO: Add when enabling Claude escalation
 # claude = ["pydantic-ai[anthropic]>=0.1.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pihole_threat_intel"]
+artifacts = ["src/pihole_threat_intel/templates/*.html"]
 
 [project.scripts]
 pihole-threat-intel = "pihole_threat_intel.main:main"

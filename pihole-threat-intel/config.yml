@@ -22,31 +22,44 @@ defaults:
   previous_evaluations_count: 20
   evaluation_ttl_days: 7
 
+  # Email output — set email_enabled to true to send reports via SMTP
+  # MailHog (SIEM profile) runs on localhost:1025 with a web UI at localhost:8025
+  email_enabled: false
+  smtp_host: "mailhog"
+  smtp_port: 1025
+  email_sender: "threat-intel@pihole.local"
+  email_recipients: "analyst@pihole.local"
+
 prompts:
   deepseek_system_prompt: |
     You are a DNS threat intelligence analyst. You evaluate domain names queried
     through a home network's Pi-hole DNS server and classify each as benign,
     suspicious, malicious, or unknown.
 
-    For each domain, consider:
-    - Domain generation algorithm (DGA) patterns: random-looking strings, unusual length
-    - Known malicious TLDs or hosting patterns
-    - Query frequency and client distribution anomalies
+    Each domain comes with pre-gathered intelligence from public sources:
+    - DNSBL results: Quad9, Cloudflare, Spamhaus DBL, SURBL blocklist checks
+    - DNS records: A, MX, NS, TXT
+    - RDAP: domain age and registrar
+    - AlienVault OTX: community threat reports and malware associations
+
+    Use this intelligence data to inform your classification. Key signals:
+    - Blocked by Quad9/Cloudflare = strong malicious signal
+    - Listed in Spamhaus/SURBL = confirmed threat with category
+    - Domain age < 30 days = suspicious (newly registered)
+    - OTX pulse count > 0 = community has reported this domain
+    - DGA patterns: random-looking strings, unusual length
     - Resemblance to legitimate domains (typosquatting)
-    - Known C2, phishing, or malware infrastructure patterns
-    - Whether the domain appears to serve ads, tracking, or telemetry
 
     Classify each domain with:
     - threat_level: benign, suspicious, malicious, or unknown
     - confidence: 0-100 (how certain you are)
-    - reasoning: brief explanation of your assessment, with slight dad humor where appropriate
-    - indicators: list of specific threat indicators observed (e.g. "DGA pattern", "known malicious TLD", "typosquatting")
+    - reasoning: brief explanation referencing the intel data
+    - indicators: list of specific threat indicators observed
 
-    Be conservative: only mark domains as malicious when there are clear indicators.
-    Mark as suspicious when patterns are concerning but not definitive.
-    Most domains in a home network will be benign.
-    Keep your reasoning concise but feel free to sprinkle in light dad humor or puns
-    when summarizing benign or suspicious domains. Stay serious for malicious ones.
+    If a domain is blocked by multiple DNSBL sources, confidence should be high.
+    If intel shows no signals and the domain looks normal, classify as benign with high confidence.
+    Be conservative: only mark as malicious with clear evidence from the intel data.
+    Keep your reasoning concise.
 
   claude_system_prompt: |
     You are an expert DNS threat intelligence analyst performing secondary review
@@ -166,10 +179,10 @@ known_domains:
     - "pi.hole"
 
 output:
-  summary_header: "=== PiHole Threat Intel Report === (DNS Dad is watching)"
-  summary_footer: "=== End Report === Stay safe out there, kiddo."
+  summary_header: "=== PiHole Threat Intel Report ==="
+  summary_footer: "=== End Report ==="
   alert_prefix: "[ALERT]"
-  no_threats_message: "All clear! Nothing suspicious — just the usual suspects. DNS Dad approves."
+  no_threats_message: "All clear — no threats detected."
   stats_template: |
     Domains queried (24h):  {total_domains_queried}
     After known-good filter: {domains_after_filtering}

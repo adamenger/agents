@@ -17,6 +17,7 @@ services:
     volumes:
       - pihole_config:/etc/pihole
       - pihole_dnsmasq:/etc/dnsmasq.d
+      - pihole_log:/var/log/pihole
     ports:
       - "53:53/tcp"
       - "53:53/udp"
@@ -77,13 +78,26 @@ services:
     volumes:
       - ./fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
-      - pihole_config:/pihole:ro
+      - pihole_log:/pihole-log:ro
     depends_on:
       - pihole
       - opensearch
     restart: unless-stopped
 
-  # To use the SIEM backend instead of SQLite, override the agent env:
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: mailhog
+    profiles: [siem]
+    ports:
+      - "1025:1025"     # SMTP
+      - "8025:8025"     # Web UI at http://localhost:8025
+    restart: unless-stopped
+
+  # To enable email reports (MailHog inbox at localhost:8025):
+  #
+  #   docker-compose run --rm -e THREAT_INTEL_EMAIL_ENABLED=true threat-intel
+  #
+  # To also switch to the OpenSearch backend:
   #
   #   threat-intel:
   #     environment:
@@ -119,6 +133,7 @@ services:
 volumes:
   pihole_config:
   pihole_dnsmasq:
+  pihole_log:
   eval_data:
   opensearch_data:
   # ollama_data:
