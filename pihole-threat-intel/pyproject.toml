@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "Daily threat intelligence analysis of PiHole DNS logs using local LLMs"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic-ai[openai]>=0.1.0",
+    "pydantic-ai-slim[openai]>=0.1.0",
     "pydantic-settings>=2.0",
     "structlog>=24.0",
     "pyyaml>=6.0",

@@ -13,6 +13,7 @@ services:
       FTLCONF_dns_upstreams: "1.1.1.1;1.0.0.1"
       FTLCONF_webserver_api_password: "changeme"
       FTLCONF_database_maxDBdays: 91
+      FTLCONF_dns_listeningMode: "all"
     volumes:
       - pihole_config:/etc/pihole
       - pihole_dnsmasq:/etc/dnsmasq.d
