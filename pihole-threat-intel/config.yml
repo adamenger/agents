@@ -1,10 +1,22 @@
 defaults:
+  # Data source: "sqlite" (lightweight, local) or "opensearch" (SIEM pipeline)
+  data_source: "sqlite"
+
+  # SQLite (default) — reads PiHole's FTL database directly
+  sqlite_pihole_db: "/etc/pihole/pihole-FTL.db"
+  sqlite_eval_db: "/data/evaluations.db"
+
+  # OpenSearch — used when data_source is "opensearch"
   opensearch_host: "localhost"
   opensearch_port: 9200
   opensearch_pihole_index_prefix: "pihole"
   opensearch_evaluations_index: "pihole-evaluations"
+
+  # Ollama
   ollama_base_url: "http://localhost:11434"
   ollama_model: "qwen3:14b"
+
+  # Agent behavior
   batch_size: 25
   lookback_hours: 24
   previous_evaluations_count: 20

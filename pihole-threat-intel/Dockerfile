@@ -6,6 +6,6 @@ COPY pyproject.toml .
 COPY config.yml .
 COPY src/ src/
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[opensearch]"
 
 ENTRYPOINT ["pihole-threat-intel"]

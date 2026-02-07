@@ -1,0 +1,123 @@
+services:
+  # =============================================================
+  # Default stack: PiHole + Threat Intel Agent
+  # Start with: docker-compose up -d
+  # =============================================================
+
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    hostname: pihole
+    environment:
+      TZ: "America/New_York"
+      FTLCONF_dns_upstreams: "1.1.1.1;1.0.0.1"
+      FTLCONF_webserver_api_password: "changeme"
+      FTLCONF_database_maxDBdays: 91
+    volumes:
+      - pihole_config:/etc/pihole
+      - pihole_dnsmasq:/etc/dnsmasq.d
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "8080:80/tcp"    # Web UI at http://localhost:8080/admin
+    restart: unless-stopped
+
+  threat-intel:
+    build: .
+    container_name: pihole-threat-intel
+    environment:
+      THREAT_INTEL_DATA_SOURCE: "sqlite"
+      THREAT_INTEL_SQLITE_PIHOLE_DB: "/pihole/pihole-FTL.db"
+      THREAT_INTEL_SQLITE_EVAL_DB: "/data/evaluations.db"
+      THREAT_INTEL_OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      THREAT_INTEL_CONFIG_PATH: "/app/config.yml"
+    volumes:
+      - pihole_config:/pihole:ro
+      - eval_data:/data
+    depends_on:
+      - pihole
+
+  # =============================================================
+  # SIEM profile: FluentBit + OpenSearch + Dashboards
+  # Start with: docker-compose --profile siem up -d
+  # =============================================================
+
+  opensearch:
+    image: opensearchproject/opensearch:2
+    container_name: opensearch
+    profiles: [siem]
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+
+  dashboards:
+    image: opensearchproject/opensearch-dashboards:2
+    container_name: opensearch-dashboards
+    profiles: [siem]
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    ports:
+      - "5601:5601"
+    depends_on:
+      - opensearch
+    restart: unless-stopped
+
+  fluentbit:
+    image: fluent/fluent-bit:latest
+    container_name: fluentbit
+    profiles: [siem]
+    volumes:
+      - ./fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - pihole_config:/pihole:ro
+    depends_on:
+      - pihole
+      - opensearch
+    restart: unless-stopped
+
+  # To use the SIEM backend instead of SQLite, override the agent env:
+  #
+  #   threat-intel:
+  #     environment:
+  #       THREAT_INTEL_DATA_SOURCE: "opensearch"
+  #       THREAT_INTEL_OPENSEARCH_HOST: "opensearch"
+
+  # =============================================================
+  # Ollama — uncomment ONLY on Linux with NVIDIA GPU.
+  # On macOS (Apple Silicon), run Ollama natively for Metal GPU
+  # acceleration. Docker on macOS cannot access the GPU and will
+  # be ~6x slower. The agent connects to the host via
+  # host.docker.internal:11434 by default.
+  #
+  # Install natively: brew install ollama && ollama pull qwen3:14b
+  # =============================================================
+
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   restart: unless-stopped
+
+volumes:
+  pihole_config:
+  pihole_dnsmasq:
+  eval_data:
+  opensearch_data:
+  # ollama_data:

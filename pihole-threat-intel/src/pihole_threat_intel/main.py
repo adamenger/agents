@@ -6,29 +6,36 @@ import structlog
 
 from .agent import evaluate_batch
 from .config import settings
+from .datasource import DataSource
 from .domain_aggregator import batch_domains, filter_known_good, remove_already_evaluated
 from .logging_config import setup_logging
 from .models import DomainEvaluation, RunStats, ThreatLevel
-from .opensearch_client import (
-    fetch_already_evaluated_domains,
-    fetch_domain_stats,
-    fetch_previous_evaluations,
-    store_evaluations,
-)
 from .output import StdoutHandler
 
 log = structlog.get_logger()
 
 
+def _get_datasource() -> DataSource:
+    if settings.data_source == "opensearch":
+        from .opensearch_source import OpenSearchSource
+
+        return OpenSearchSource()
+    else:
+        from .sqlite_source import SQLiteSource
+
+        return SQLiteSource()
+
+
 async def run() -> None:
     setup_logging()
-    log.info("starting_pihole_threat_intel")
+    log.info("starting_pihole_threat_intel", data_source=settings.data_source)
 
     stats = RunStats()
     handler = StdoutHandler()
+    ds = _get_datasource()
 
-    # 1. Query OpenSearch for last 24h of pihole logs
-    domain_stats = fetch_domain_stats()
+    # 1. Query for last 24h of pihole logs
+    domain_stats = ds.fetch_domain_stats()
     stats.total_domains_queried = len(domain_stats)
 
     if not domain_stats:
@@ -41,7 +48,7 @@ async def run() -> None:
     stats.domains_after_filtering = len(filtered)
 
     # 3. Remove already-evaluated domains (within TTL)
-    already_evaluated = fetch_already_evaluated_domains()
+    already_evaluated = ds.fetch_already_evaluated_domains()
     stats.domains_already_evaluated = len(already_evaluated)
     to_evaluate = remove_already_evaluated(filtered, already_evaluated)
     stats.domains_to_evaluate = len(to_evaluate)
@@ -52,7 +59,7 @@ async def run() -> None:
         return
 
     # 4. Load previous evaluations for learning context
-    previous = fetch_previous_evaluations()
+    previous = ds.fetch_previous_evaluations()
 
     # 5. Batch and evaluate
     batches = batch_domains(to_evaluate, settings.batch_size)
@@ -82,8 +89,8 @@ async def run() -> None:
             stats.escalations += 1
     stats.evaluations_produced = len(all_evaluations)
 
-    # 7. Store evaluations in OpenSearch
-    stored = store_evaluations(all_evaluations)
+    # 7. Store evaluations
+    stored = ds.store_evaluations(all_evaluations)
     log.info("evaluations_stored", count=stored)
 
     # 8. Emit alerts for non-benign domains

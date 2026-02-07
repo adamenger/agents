@@ -8,7 +8,14 @@ _defaults = get_defaults()
 class Settings(BaseSettings):
     model_config = {"env_prefix": "THREAT_INTEL_"}
 
-    # OpenSearch
+    # Data source backend
+    data_source: str = _defaults.get("data_source", "sqlite")
+
+    # SQLite (default)
+    sqlite_pihole_db: str = _defaults.get("sqlite_pihole_db", "/etc/pihole/pihole-FTL.db")
+    sqlite_eval_db: str = _defaults.get("sqlite_eval_db", "/data/evaluations.db")
+
+    # OpenSearch (SIEM mode)
     opensearch_host: str = _defaults.get("opensearch_host", "localhost")
     opensearch_port: int = _defaults.get("opensearch_port", 9200)
     opensearch_pihole_index_prefix: str = _defaults.get("opensearch_pihole_index_prefix", "pihole")

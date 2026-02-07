@@ -1,180 +1,208 @@
 # PiHole Threat Intel Agent
 
-Automated daily threat analysis of Pi-hole DNS logs using a local LLM (Qwen3 14B via Ollama). Queries OpenSearch for DNS logs, filters known-good domains, evaluates unknowns in batches via structured output, and stores results back in OpenSearch.
+Automated daily threat analysis of Pi-hole DNS logs using a local LLM. Classifies every domain queried on your network as benign, suspicious, malicious, or unknown — with reasoning, confidence scores, and threat indicators.
 
-## How It Works
+Runs entirely locally. No cloud APIs required (unless you want Claude escalation for low-confidence results).
 
-```
-Pi-hole DNS logs
-  → FluentBit parses & ships to OpenSearch (daily indices: pihole-YYYY.MM.DD)
-  → This agent queries OpenSearch for last 24h of queries
-  → Filters out known-good domains (Google, Apple, CDNs, etc.)
-  → Skips domains already evaluated within TTL (7 days)
-  → Batches remaining domains (25 per batch) to Ollama
-  → LLM classifies each as benign/suspicious/malicious/unknown
-  → Stores evaluations in OpenSearch (pihole-evaluations index)
-  → Prints summary report with alerts for non-benign domains
-```
+## Quick Start (Apple Silicon / macOS)
 
-Subsequent runs are fast (~1-5 min) because only new domains need evaluation. First run takes ~20 min for a typical home network (~1000 unique domains after filtering).
-
-## Prerequisites
-
-### 1. OpenSearch
-
-An OpenSearch instance with Pi-hole logs indexed. The agent expects daily indices with prefix `pihole-` (e.g., `pihole-2026.02.06`) containing these fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `domain` | keyword | Queried domain name |
-| `client_or_target` | keyword | Client IP or upstream target |
-| `action` | keyword | `query`, `forwarded`, `reply`, `cached`, `gravity`, etc. |
-| `query_type` | keyword | `A`, `AAAA`, `CNAME`, `PTR`, etc. |
-| `@timestamp` | date | Log timestamp |
-
-The agent creates a `pihole-evaluations` index automatically on first run.
-
-### 2. FluentBit (or equivalent)
-
-Something needs to ship Pi-hole logs to OpenSearch. The reference setup uses FluentBit with this parser:
-
-```ini
-[PARSER]
-    Name          pihole
-    Format        regex
-    Regex         ^(?<time>[A-Za-z]{3} [ \d]{2} \d{2}:\d{2}:\d{2}) dnsmasq\[(?<pid>\d+)\]: (?<action>query|forwarded|reply|cached|config|gravity|blacklist|regex)\[(?<query_type>[A-Z0-9]+)\] (?<domain>\S+) (from|to) (?<client_or_target>\S+)$
-    Time_Key      time
-    Time_Format   %b %d %H:%M:%S
-```
-
-And this output:
-
-```ini
-[OUTPUT]
-    Name            opensearch
-    Match           pihole.*
-    Host            localhost
-    Port            9200
-    Suppress_Type_Name On
-    Logstash_Format On
-    Logstash_Prefix pihole
-    Time_Key        @timestamp
-```
-
-Any log shipper that produces the same index structure will work.
-
-### 3. Ollama
-
-A running [Ollama](https://ollama.com) instance with the model pulled:
+**Prerequisites:** Docker Desktop and [Ollama](https://ollama.com) installed natively.
 
 ```bash
+# 1. Pull the model (~9GB, one-time)
 ollama pull qwen3:14b
+
+# 2. Start the stack
+docker-compose up -d
+
+# 3. Point your machine's DNS at Pi-hole
+#    System Preferences → Network → DNS → 127.0.0.1
+
+# 4. Browse normally for a while, then run the agent
+docker-compose run --rm threat-intel
 ```
 
-Qwen3 14B requires ~12GB VRAM (Q4_K_M quantization). It supports native tool calling which PydanticAI uses for structured output.
+That's it. Pi-hole collects DNS queries, the agent reads them directly from Pi-hole's SQLite database, sends batches to your local Ollama for classification, and stores results.
+
+### Why Ollama runs natively (not in Docker)
+
+Docker on macOS cannot access the Metal GPU. Benchmarks show **6x slower inference** in Docker (CPU-only) vs native Metal:
+
+| | Native (Metal) | Docker (CPU) |
+|---|---|---|
+| 14B model | ~14 tok/s | ~2.3 tok/s |
+
+The docker-compose connects to Ollama on the host via `host.docker.internal:11434`. On Linux with an NVIDIA GPU, you can uncomment the Ollama service in `docker-compose.yml` for full GPU passthrough.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Default: SQLite mode (lightweight, local)                       │
+│                                                                 │
+│  Pi-hole ──(FTL.db)──→ Agent ──→ Ollama (native) ──→ SQLite   │
+│   DNS server         reads DB     Qwen3 14B         evaluations │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ SIEM mode: docker-compose --profile siem up -d                  │
+│                                                                 │
+│  Pi-hole ──→ FluentBit ──→ OpenSearch ──→ Agent ──→ OpenSearch │
+│   DNS logs   parses/ships   stores logs   queries    evaluations│
+│                                           │                     │
+│                             Dashboards ←──┘ (visualization)     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Swappable Backend
+
+The agent uses a `DataSource` abstraction — swap between SQLite and OpenSearch with one env var:
+
+| Mode | `THREAT_INTEL_DATA_SOURCE` | Best for |
+|------|---------------------------|----------|
+| `sqlite` (default) | Reads Pi-hole's FTL database directly | Home use, local agents, quick setup |
+| `opensearch` | Reads from OpenSearch indices via FluentBit | Corporate/SIEM, multi-source correlation, dashboards |
+
+Adding a new backend (Postgres, Splunk, Elastic, etc.) = implement the `DataSource` ABC.
+
+## What It Does
+
+1. Queries Pi-hole for unique domains from the last 24 hours
+2. Filters out known-good domains (Google, Apple, CDNs, etc. — configurable in `config.yml`)
+3. Skips domains already evaluated within the TTL window (default: 7 days)
+4. Batches remaining domains (25 per batch) to the local LLM
+5. LLM classifies each domain with threat level, confidence, reasoning, and indicators
+6. Stores evaluations (SQLite or OpenSearch depending on mode)
+7. Prints a summary report with alerts for non-benign domains
+
+First run: ~20 min for a typical home network (~1000 unique domains after filtering).
+Subsequent runs: ~1-5 min (only new domains need evaluation).
 
 ## Configuration
 
-All configuration comes from three layers (highest priority wins):
+Three layers (highest priority wins):
 
-1. **Environment variables** (prefix `THREAT_INTEL_`) — set by Ansible/systemd in production
-2. **`config.yml` defaults section** — generic defaults for local development
-3. **Hardcoded fallbacks** in `config.py` — last resort if config.yml is missing
+1. **Environment variables** (`THREAT_INTEL_` prefix)
+2. **`config.yml`** defaults section
+3. **Hardcoded fallbacks** in `config.py`
 
-### config.yml
-
-The `defaults:` section holds connection settings and tuning parameters:
-
-```yaml
-defaults:
-  opensearch_host: "localhost"
-  opensearch_port: 9200
-  ollama_base_url: "http://localhost:11434"
-  ollama_model: "qwen3:14b"
-  batch_size: 25
-  lookback_hours: 24
-  evaluation_ttl_days: 7
-```
-
-The `prompts:` section holds all LLM system/user prompts. The `known_domains:` section holds the allowlist of domains to skip (Google, Apple, CDNs, etc.). The `output:` section holds report formatting strings.
-
-### Environment Variables
+### Key Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `THREAT_INTEL_OPENSEARCH_HOST` | `localhost` | OpenSearch hostname |
-| `THREAT_INTEL_OPENSEARCH_PORT` | `9200` | OpenSearch port |
-| `THREAT_INTEL_OPENSEARCH_PIHOLE_INDEX_PREFIX` | `pihole` | Index prefix for pihole logs |
-| `THREAT_INTEL_OPENSEARCH_EVALUATIONS_INDEX` | `pihole-evaluations` | Index for storing evaluations |
-| `THREAT_INTEL_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API URL |
+| `THREAT_INTEL_DATA_SOURCE` | `sqlite` | `sqlite` or `opensearch` |
+| `THREAT_INTEL_SQLITE_PIHOLE_DB` | `/etc/pihole/pihole-FTL.db` | Path to Pi-hole's FTL database |
+| `THREAT_INTEL_SQLITE_EVAL_DB` | `/data/evaluations.db` | Path to evaluation storage |
+| `THREAT_INTEL_OPENSEARCH_HOST` | `localhost` | OpenSearch host (SIEM mode) |
+| `THREAT_INTEL_OPENSEARCH_PORT` | `9200` | OpenSearch port (SIEM mode) |
+| `THREAT_INTEL_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `THREAT_INTEL_OLLAMA_MODEL` | `qwen3:14b` | Ollama model name |
 | `THREAT_INTEL_BATCH_SIZE` | `25` | Domains per LLM batch |
-| `THREAT_INTEL_LOOKBACK_HOURS` | `24` | Hours of logs to query |
-| `THREAT_INTEL_PREVIOUS_EVALUATIONS_COUNT` | `20` | Recent evaluations for learning context |
+| `THREAT_INTEL_LOOKBACK_HOURS` | `24` | Hours of DNS logs to analyze |
 | `THREAT_INTEL_EVALUATION_TTL_DAYS` | `7` | Days before re-evaluating a domain |
 | `THREAT_INTEL_CONFIG_PATH` | `/app/config.yml` | Path to config.yml |
 
-## Running Locally
+### config.yml
+
+All prompts, known-good domain lists, and output formatting strings live in `config.yml`. This keeps the Python code generic and the behavior tunable without code changes.
+
+## SIEM Mode (FluentBit + OpenSearch)
+
+For a full SIEM-like pipeline with log aggregation and dashboards:
 
 ```bash
-# Install
-pip install -e .
+# Start everything including FluentBit, OpenSearch, and Dashboards
+docker-compose --profile siem up -d
 
-# Point at your OpenSearch and Ollama
-export THREAT_INTEL_OPENSEARCH_HOST=<your-opensearch-host>
-export THREAT_INTEL_OLLAMA_BASE_URL=http://<your-ollama-host>:11434
-export THREAT_INTEL_CONFIG_PATH=./config.yml
-
-# Run
-pihole-threat-intel
+# Override the agent to use OpenSearch
+docker-compose run --rm \
+  -e THREAT_INTEL_DATA_SOURCE=opensearch \
+  -e THREAT_INTEL_OPENSEARCH_HOST=opensearch \
+  threat-intel
 ```
 
-## Docker
+OpenSearch Dashboards will be at `http://localhost:5601`.
 
-```bash
-docker build -t pihole-threat-intel .
-docker run --rm --network=host \
-  -e THREAT_INTEL_OPENSEARCH_HOST=<your-opensearch-host> \
-  -e THREAT_INTEL_OLLAMA_BASE_URL=http://<your-ollama-host>:11434 \
-  pihole-threat-intel
+### FluentBit Configuration
+
+The included FluentBit config (`fluentbit/`) parses Pi-hole v5 (dnsmasq) log format and ships to OpenSearch as daily indices (`pihole-YYYY.MM.DD`). The parser extracts:
+
+| Field | Description |
+|-------|-------------|
+| `domain` | Queried domain name |
+| `client_or_target` | Client IP or upstream DNS target |
+| `action` | `query`, `forwarded`, `reply`, `cached`, `gravity`, etc. |
+| `query_type` | `A`, `AAAA`, `CNAME`, `PTR`, etc. |
+| `@timestamp` | Log timestamp |
+
+Pi-hole v6 changed the log format. If running v6, the SQLite backend (default) is recommended since it reads the FTL database directly and works with any Pi-hole version.
+
+## Project Structure
+
 ```
+pihole-threat-intel/
+├── docker-compose.yml          # PiHole + agent (default), SIEM profile
+├── Dockerfile
+├── config.yml                  # All prompts, allowlists, output strings, defaults
+├── pyproject.toml
+├── fluentbit/                  # FluentBit config (SIEM mode only)
+│   ├── fluent-bit.conf
+│   └── parsers.conf
+└── src/pihole_threat_intel/
+    ├── main.py                 # Pipeline orchestrator
+    ├── config.py               # Settings (env vars + config.yml defaults)
+    ├── yaml_config.py          # Loads config.yml
+    ├── datasource.py           # DataSource ABC
+    ├── sqlite_source.py        # SQLite backend (reads FTL DB directly)
+    ├── opensearch_source.py    # OpenSearch backend (SIEM mode)
+    ├── agent.py                # PydanticAI agent (Ollama/Qwen3)
+    ├── models.py               # Pydantic data models
+    ├── domain_aggregator.py    # Filter known-good, dedup, batch
+    ├── output.py               # OutputHandler ABC + StdoutHandler
+    ├── known_domains.py        # Known-good domain allowlist
+    └── logging_config.py       # structlog JSON to stderr
+```
+
+## Extending
+
+### Add a new data source
+
+Implement the `DataSource` ABC in `datasource.py`:
+
+```python
+class MySource(DataSource):
+    def fetch_domain_stats(self) -> list[DomainStats]: ...
+    def fetch_previous_evaluations(self) -> list[DomainEvaluation]: ...
+    def fetch_already_evaluated_domains(self) -> set[str]: ...
+    def store_evaluations(self, evaluations) -> int: ...
+```
+
+Then add it to `_get_datasource()` in `main.py`.
+
+### Add a new output handler
+
+Implement `OutputHandler` in `output.py` (e.g., Slack, SMS, email).
+
+### Enable Claude escalation
+
+Stubbed in `agent.py` and `config.py`. Uncomment the Claude code, set `THREAT_INTEL_ANTHROPIC_API_KEY`, and low-confidence non-benign results get a second opinion from Claude.
 
 ## Deployment (Ansible)
 
-The Ansible role at `roles/pihole-threat-intel/` handles:
-- Building the Docker image on the target host
-- Creating a systemd oneshot service
-- Setting up a daily cron job (default: 6am)
+For dedicated server deployment (e.g., Linux with NVIDIA GPU):
 
 ```bash
 ansible-playbook playbooks/pihole-threat-intel.yml
 ```
 
-Manual trigger after deployment:
+The Ansible role builds the Docker image, creates a systemd oneshot service, and sets up a daily cron (default: 6am). Manual trigger:
+
 ```bash
 systemctl start pihole-threat-intel
 journalctl -u pihole-threat-intel -f
 ```
 
-## Architecture
-
-```
-src/pihole_threat_intel/
-├── main.py               # Pipeline orchestrator
-├── config.py             # Settings (env vars + config.yml defaults)
-├── yaml_config.py        # Loads config.yml (prompts, known domains, output strings)
-├── opensearch_client.py  # Read pihole logs, read/write evaluations
-├── domain_aggregator.py  # Filter known-good, dedup already-evaluated, batch
-├── agent.py              # PydanticAI agent (Ollama/Qwen3)
-├── models.py             # Pydantic data models (ThreatLevel, DomainEvaluation, etc.)
-├── output.py             # OutputHandler ABC + StdoutHandler
-├── known_domains.py      # Known-good domain allowlist from config.yml
-└── logging_config.py     # structlog JSON to stderr
-```
-
 ## Evaluation Output
-
-Each domain gets classified as:
 
 | Threat Level | Meaning |
 |-------------|---------|
@@ -183,12 +211,4 @@ Each domain gets classified as:
 | `malicious` | Clear indicators of C2, phishing, or malware infrastructure |
 | `unknown` | Insufficient information to classify |
 
-Evaluations include confidence (0-100), reasoning, and specific threat indicators (e.g., "DGA pattern", "typosquatting", "known malicious TLD").
-
-## Future: Claude Escalation
-
-The code includes stubbed support for escalating low-confidence non-benign results to Claude via the Anthropic API. To enable:
-
-1. Uncomment the Claude-related code in `agent.py`, `config.py`, and `pyproject.toml`
-2. Set `THREAT_INTEL_ANTHROPIC_API_KEY`
-3. Domains where the local model is uncertain get a second opinion from Claude
+Each evaluation includes confidence (0-100), reasoning (with slight dad humor for benign/suspicious), and specific threat indicators.
